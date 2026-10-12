@@ -32,6 +32,10 @@ The Lovable-hosted frontend is static and does not run this Node API. Deploy thi
 
 To connect a frontend hosted separately, set its `<meta name="api-base-url" content="https://YOUR-SERVICE.onrender.com">` to the Render service origin. All API requests use credentialed requests, so the server enables CORS only for `FRONTEND_ORIGIN` and issues secure cross-site session cookies in that mode. If browser privacy settings block third-party cookies, host the frontend and API on the same site instead.
 
+## Deploy the full app to Vercel
+
+Import the GitHub repository into Vercel as a Node.js project; `vercel.json` maps API requests to the serverless handler and routes browser paths back to `index.html`. Configure these Vercel environment variables for Production: `FIREBASE_PROJECT_ID=deft-chariot-387717`, `FIREBASE_SERVICE_ACCOUNT_JSON` (the full private service-account JSON), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and a long random `SESSION_SECRET`. Keep every credential private. Authentication uses signed, expiring cookies so sessions work across Vercel function instances. Firebase must be configured because serverless local files are not persistent. After deployment, check `/api/health`; the site and API use the same Vercel domain.
+
 Deploy [firestore.rules](./firestore.rules) to the Firebase project to deny direct browser access to Firestore. The server uses the Firebase Admin SDK and does not require a Firebase client config in the page. Chat history is ordered by the server and does not need an additional composite index.
 
 ## Member accounts, admin review, and privacy

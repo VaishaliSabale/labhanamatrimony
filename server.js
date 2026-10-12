@@ -13,8 +13,8 @@ const interestsFile = path.join(dataDirectory, "member-interests.json");
 const messagesFile = path.join(dataDirectory, "member-messages.json");
 const sessionLifetime = 8 * 60 * 60 * 1000;
 const maxRequestBytes = 16 * 1024;
-const sessions = new Map();
 const loginAttempts = new Map();
+const sessionSecret = process.env.SESSION_SECRET || crypto.randomBytes(32);
 const frontendOrigins = (process.env.FRONTEND_ORIGIN || "")
   .split(",")
   .map(origin => origin.trim())
@@ -181,24 +181,13 @@ async function getRegistrationById(id) {
   return getLocalRegistrations().find(registration => registration.id === id) || null;
 }
 
-function getSessionAccount(token) {
-  return sessions.get(token)?.account || null;
-}
-
 async function getMemberSessionAccount(request) {
   const token = getMemberSession(request);
   if (!token) return null;
-  const activeAccount = getSessionAccount(token);
-  if (activeAccount) return activeAccount;
-  const boundAccountId = sessions.get(token)?.accountId;
+  const boundAccountId = decodeSessionToken(token, "member")?.accountId;
   if (!boundAccountId) return null;
   const account = await getMemberAccountById(boundAccountId);
-  if (!account) {
-    sessions.delete(token);
-    return null;
-  }
-  sessions.set(token, { ...sessions.get(token), account });
-  return account;
+  return account || null;
 }
 
 async function getMemberAccountById(id) {
@@ -593,17 +582,41 @@ function publicProfile(registration) {
   };
 }
 
+function createSessionToken(role, accountId = "") {
+  const payload = Buffer.from(JSON.stringify({
+    role,
+    accountId,
+    expiresAt: Date.now() + sessionLifetime
+  })).toString("base64url");
+  const signature = crypto.createHmac("sha256", sessionSecret).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function decodeSessionToken(token, role) {
+  const [payload, signature, extra] = token.split(".");
+  if (!payload || !signature || extra) return null;
+  const expected = crypto.createHmac("sha256", sessionSecret).update(payload).digest();
+  let actual;
+  try {
+    actual = Buffer.from(signature, "base64url");
+  } catch {
+    return null;
+  }
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
+  try {
+    const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (session.role !== role || !Number.isFinite(session.expiresAt) || session.expiresAt < Date.now()) return null;
+    return session;
+  } catch {
+    return null;
+  }
+}
+
 function getSessionToken(request, cookieName, role) {
   const cookieHeader = request.headers.cookie || "";
   const token = cookieHeader.split(";").map(cookie => cookie.trim())
     .find(cookie => cookie.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
-  if (!token) return null;
-  const session = sessions.get(token);
-  if (!session || session.expiresAt < Date.now() || session.role !== role) {
-    sessions.delete(token);
-    return null;
-  }
-  return token;
+  return token && decodeSessionToken(token, role) ? token : null;
 }
 
 function getAdminSession(request) {
@@ -705,8 +718,7 @@ async function handleApi(request, response, pathname) {
       const passwordRecord = createPasswordRecord(password);
       registration.memberAccountId = registration.id;
       await createMemberRegistrationWithAccount(registration, passwordRecord);
-      const token = crypto.randomBytes(32).toString("hex");
-      sessions.set(token, { role: "member", expiresAt: Date.now() + sessionLifetime, accountId: registration.id });
+      const token = createSessionToken("member", registration.id);
       return sendJson(response, 201, { message: "Account created. Your profile will appear after admin approval." }, {
         "Set-Cookie": `labhana_member=${token}; ${cookieOptions()}`
       });
@@ -743,8 +755,7 @@ async function handleApi(request, response, pathname) {
         return sendJson(response, 401, { error: "Email or password is incorrect." });
       }
       loginAttempts.delete(address);
-      const token = crypto.randomBytes(32).toString("hex");
-      sessions.set(token, { role: "member", expiresAt: now + sessionLifetime, accountId: account.id });
+      const token = createSessionToken("member", account.id);
       return sendJson(response, 200, { authenticated: true }, {
         "Set-Cookie": `labhana_member=${token}; ${cookieOptions()}`
       });
@@ -941,8 +952,6 @@ async function handleApi(request, response, pathname) {
   }
 
   if (pathname === "/api/member/logout" && request.method === "POST") {
-    const token = getMemberSession(request);
-    if (token) sessions.delete(token);
     return sendJson(response, 200, { authenticated: false }, {
       "Set-Cookie": "labhana_member=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
     });
@@ -981,8 +990,7 @@ async function handleApi(request, response, pathname) {
       }
 
       loginAttempts.delete(address);
-      const token = crypto.randomBytes(32).toString("hex");
-      sessions.set(token, { role: "admin", expiresAt: now + sessionLifetime });
+      const token = createSessionToken("admin");
       return sendJson(response, 200, { authenticated: true }, {
         "Set-Cookie": `labhana_admin=${token}; ${cookieOptions()}`
       });
@@ -994,8 +1002,6 @@ async function handleApi(request, response, pathname) {
   }
 
   if (pathname === "/api/admin/logout" && request.method === "POST") {
-    const token = getAdminSession(request);
-    if (token) sessions.delete(token);
     return sendJson(response, 200, { authenticated: false }, {
       "Set-Cookie": "labhana_admin=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
     });
@@ -1040,9 +1046,6 @@ async function handleApi(request, response, pathname) {
       }
       await deleteRegistration(id);
       await deleteMemberConnections(id);
-      for (const [token, session] of sessions) {
-        if (session.role === "member" && session.accountId === id) sessions.delete(token);
-      }
       return sendJson(response, 200, { message: "Registration deleted." });
     } catch (error) {
       if (error.status) return sendJson(response, error.status, { error: error.message });
@@ -1058,7 +1061,7 @@ async function handleApi(request, response, pathname) {
   return false;
 }
 
-const server = http.createServer(async (request, response) => {
+const requestHandler = async (request, response) => {
   const url = new URL(request.url, "http://localhost");
   const apiPath = url.pathname.replace(/\/+$/, "") || "/";
   const origin = request.headers.origin;
@@ -1137,14 +1140,19 @@ const server = http.createServer(async (request, response) => {
     });
     response.end(request.method === "HEAD" ? undefined : content);
   });
-});
+};
 
-const port = Number(process.env.PORT) || 4173;
-const host = process.env.HOST || "0.0.0.0";
-server.listen(port, host, () => {
-  console.log(`Labhana Samaj Matrimony is running at http://localhost:${port}`);
-  if (!firestore) console.log("Firebase is not configured; using local JSON registration storage.");
-  if (!hasConfiguredAdmin()) {
-    console.warn("Admin login is disabled. Set ADMIN_EMAIL and ADMIN_PASSWORD before starting the server.");
-  }
-});
+if (require.main === module) {
+  const port = Number(process.env.PORT) || 4173;
+  const host = process.env.HOST || "0.0.0.0";
+  const server = http.createServer(requestHandler);
+  server.listen(port, host, () => {
+    console.log(`Labhana Samaj Matrimony is running at http://localhost:${port}`);
+    if (!firestore) console.log("Firebase is not configured; using local JSON registration storage.");
+    if (!hasConfiguredAdmin()) {
+      console.warn("Admin login is disabled. Set ADMIN_EMAIL and ADMIN_PASSWORD before starting the server.");
+    }
+  });
+}
+
+module.exports = requestHandler;

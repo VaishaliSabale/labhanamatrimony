@@ -13,6 +13,8 @@ services:
         value: https://labhana-bond-connect.lovable.app
       - key: FIREBASE_PROJECT_ID
         value: deft-chariot-387717
+      - key: SESSION_SECRET
+        generateValue: true
       - key: FIREBASE_SERVICE_ACCOUNT_JSON
         sync: false
       - key: ADMIN_EMAIL
