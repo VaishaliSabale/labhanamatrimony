@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: labhana-samaj-matrimony
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_ORIGIN
+        value: https://labhana-bond-connect.lovable.app
+      - key: FIREBASE_PROJECT_ID
+        value: deft-chariot-387717
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

@@ -1,0 +1,9 @@
+data/
+secrets/
+*.tmp
+node_modules/
+.env*
+!.env.example
+*-service-account*.json
+*firebase-adminsdk*.json
+firebase-adminsdk*.json
