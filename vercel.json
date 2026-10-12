@@ -6,7 +6,23 @@
   },
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/member",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/admin",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/search",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/membership",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/profile/:id",
       "destination": "/index.html"
     }
   ]
