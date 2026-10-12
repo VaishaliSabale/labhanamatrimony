@@ -2,7 +2,7 @@
   "name": "labhana-samaj-matrimony",
   "private": true,
   "scripts": {
-    "start": "node lib/server.js"
+    "start": "node \"api/[...path].js\""
   },
   "dependencies": {
     "firebase-admin": "^14.5.0"
